@@ -1,0 +1,19 @@
+{
+  "name": "wasm-simd-test",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd nurbs_wasm && wasm-pack build --target web",
+    "copy:wasm": "node copy-wasm.js",
+    "build": "npm run build:wasm && npm run copy:wasm && cd web && npm run build",
+    "dev": "npm run build:wasm && npm run copy:wasm && cd web && npm run dev",
+    "install:all": "npm install && cd web && npm install"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.11.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
