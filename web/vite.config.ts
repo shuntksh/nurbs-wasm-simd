@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
     wasm(),
   ],
+  base: './', // Set base path for GitHub Pages
   build: {
     target: 'esnext',
   },

@@ -61,6 +61,28 @@ The application allows users to:
 
    This will create a production-ready build in the `web/dist` directory.
 
+## Deployment
+
+This project is configured to automatically deploy to GitHub Pages using GitHub Actions.
+
+### Automatic Deployment
+
+When you push changes to the `main` branch, the GitHub Actions workflow will:
+1. Build the Rust WASM module
+2. Build the React web application
+3. Deploy the built files to GitHub Pages
+
+You can view the deployed application at: `https://[your-username].github.io/[repository-name]/`
+
+### Manual Deployment
+
+You can also trigger a manual deployment from the GitHub Actions tab in your repository.
+
+To set up GitHub Pages for your repository:
+1. Go to your repository settings
+2. Navigate to the "Pages" section
+3. Under "Build and deployment", select "GitHub Actions" as the source
+
 ## How It Works
 
 1. **NURBS Implementation (Rust):**

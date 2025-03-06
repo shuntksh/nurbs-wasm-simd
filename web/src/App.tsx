@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ControlPoint, NurbsCurve } from 'nurbs_wasm';
+import initWasm, { ControlPoint, NurbsCurve } from '../nurbs_wasm/pkg/nurbs_wasm';
 
 // Define a type for the WASM module
 interface WasmModule {
@@ -11,12 +11,17 @@ interface WasmModule {
 declare global {
   interface Window {
     wasmModule: WasmModule;
+    wasmInitialized: boolean;
   }
 }
 
-// Dynamic import for the WASM module
-import('nurbs_wasm').then(module => {
-  window.wasmModule = module;
+// Initialize the WASM module
+initWasm().then(() => {
+  window.wasmModule = { ControlPoint, NurbsCurve };
+  window.wasmInitialized = true;
+  console.log('WASM module initialized successfully');
+}).catch(err => {
+  console.error('Failed to initialize WASM module:', err);
 });
 
 // Canvas dimensions
@@ -51,12 +56,12 @@ function App() {
   useEffect(() => {
     async function loadWasm() {
       try {
-        // Wait for the dynamic import to complete
-        if (!window.wasmModule) {
-          console.log('Waiting for WASM module to load...');
+        // Wait for the WASM module to be initialized
+        if (!window.wasmInitialized) {
+          console.log('Waiting for WASM module to initialize...');
           await new Promise<void>(resolve => {
             const checkModule = () => {
-              if (window.wasmModule) {
+              if (window.wasmInitialized) {
                 resolve();
               } else {
                 setTimeout(checkModule, 100);
@@ -66,7 +71,7 @@ function App() {
           });
         }
         
-        console.log('WASM module initialized successfully');
+        console.log('WASM module ready to use');
         
         // Create initial curve with degree 3
         const initialCurve = new NurbsCurve(3);
