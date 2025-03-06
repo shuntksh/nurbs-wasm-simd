@@ -411,3 +411,142 @@ pub fn generate_nurbs_curve_points(
     
     result.into_boxed_slice()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_control_point_creation() {
+        let point = ControlPoint::new(1.0, 2.0, 3.0);
+        assert_eq!(point.x(), 1.0);
+        assert_eq!(point.y(), 2.0);
+        assert_eq!(point.weight(), 3.0);
+    }
+
+    #[test]
+    fn test_control_point_setters() {
+        let mut point = ControlPoint::new(1.0, 2.0, 3.0);
+        point.set_x(4.0);
+        point.set_y(5.0);
+        point.set_weight(6.0);
+        assert_eq!(point.x(), 4.0);
+        assert_eq!(point.y(), 5.0);
+        assert_eq!(point.weight(), 6.0);
+    }
+
+    #[test]
+    fn test_nurbs_curve_creation() {
+        let curve = NurbsCurve::new(3);
+        assert_eq!(curve.get_degree(), 3);
+        assert_eq!(curve.num_control_points(), 0);
+    }
+
+    #[test]
+    fn test_add_control_point() {
+        let mut curve = NurbsCurve::new(3);
+        let point = ControlPoint::new(1.0, 2.0, 3.0);
+        curve.add_control_point(point);
+        assert_eq!(curve.num_control_points(), 1);
+        
+        let retrieved_point = curve.get_control_point(0).unwrap();
+        assert_eq!(retrieved_point.x(), 1.0);
+        assert_eq!(retrieved_point.y(), 2.0);
+        assert_eq!(retrieved_point.weight(), 3.0);
+    }
+
+    #[test]
+    fn test_update_control_point() {
+        let mut curve = NurbsCurve::new(3);
+        curve.add_control_point(ControlPoint::new(1.0, 2.0, 3.0));
+        
+        let success = curve.update_control_point(0, 4.0, 5.0, 6.0);
+        assert!(success);
+        
+        let point = curve.get_control_point(0).unwrap();
+        assert_eq!(point.x(), 4.0);
+        assert_eq!(point.y(), 5.0);
+        assert_eq!(point.weight(), 6.0);
+        
+        // Test updating non-existent point
+        let failure = curve.update_control_point(1, 7.0, 8.0, 9.0);
+        assert!(!failure);
+    }
+
+    #[test]
+    fn test_evaluate_simple_curve() {
+        let mut curve = NurbsCurve::new(1); // Linear curve
+        curve.add_control_point(ControlPoint::new(0.0, 0.0, 1.0));
+        curve.add_control_point(ControlPoint::new(10.0, 10.0, 1.0));
+        
+        // Evaluate at u=0.0 (should be first control point)
+        let point_start = curve.evaluate(0.0).unwrap();
+        assert_eq!(point_start.x(), 0.0);
+        assert_eq!(point_start.y(), 0.0);
+        
+        // Evaluate at u=1.0 (should be last control point)
+        let point_end = curve.evaluate(1.0).unwrap();
+        assert_eq!(point_end.x(), 10.0);
+        assert_eq!(point_end.y(), 10.0);
+        
+        // Evaluate at u=0.5 (should be midpoint for linear curve)
+        let point_mid = curve.evaluate(0.5).unwrap();
+        assert_eq!(point_mid.x(), 5.0);
+        assert_eq!(point_mid.y(), 5.0);
+    }
+
+    #[test]
+    fn test_generate_points() {
+        let mut curve = NurbsCurve::new(1); // Linear curve
+        curve.add_control_point(ControlPoint::new(0.0, 0.0, 1.0));
+        curve.add_control_point(ControlPoint::new(10.0, 10.0, 1.0));
+        
+        let points = curve.generate_points(3);
+        assert_eq!(points.len(), 3);
+        
+        // First point should be at u=0.0
+        assert_eq!(points[0].x(), 0.0);
+        assert_eq!(points[0].y(), 0.0);
+        
+        // Last point should be at u=1.0
+        assert_eq!(points[2].x(), 10.0);
+        assert_eq!(points[2].y(), 10.0);
+    }
+
+    #[test]
+    fn test_weighted_control_points() {
+        let mut curve = NurbsCurve::new(1); // Linear curve
+        curve.add_control_point(ControlPoint::new(0.0, 0.0, 1.0));
+        curve.add_control_point(ControlPoint::new(10.0, 10.0, 2.0)); // Higher weight pulls curve toward this point
+        
+        // At u=0.5, point should be closer to the second control point due to higher weight
+        let point = curve.evaluate(0.5).unwrap();
+        assert!(point.x() > 5.0); // Should be pulled toward second point (x > 5.0)
+        assert!(point.y() > 5.0); // Should be pulled toward second point (y > 5.0)
+    }
+
+    #[test]
+    fn test_helper_function() {
+        let control_points_x = vec![0.0, 10.0];
+        let control_points_y = vec![0.0, 10.0];
+        let weights = vec![1.0, 1.0];
+        
+        let result = generate_nurbs_curve_points(
+            &control_points_x,
+            &control_points_y,
+            &weights,
+            1, // Linear curve
+            3  // 3 points
+        );
+        
+        assert_eq!(result.len(), 6); // 3 points * 2 coordinates
+        
+        // First point (x,y) = (0,0)
+        assert_eq!(result[0], 0.0);
+        assert_eq!(result[1], 0.0);
+        
+        // Last point (x,y) = (10,10)
+        assert_eq!(result[4], 10.0);
+        assert_eq!(result[5], 10.0);
+    }
+}
