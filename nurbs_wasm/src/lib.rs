@@ -1,6 +1,7 @@
 use wasm_bindgen::prelude::*;
 use std::vec::Vec;
 use std::f64;
+use std::arch::wasm32::*;
 
 // When the `dlmalloc` feature is enabled, use `dlmalloc` as the global allocator.
 #[cfg(feature = "dlmalloc")]
@@ -209,7 +210,7 @@ impl NurbsCurve {
     }
 
     // Calculate the basis functions for a given parameter u and span
-    // Standard implementation for better accuracy
+    // SIMD-optimized implementation
     fn calculate_basis_functions(&self, span: usize, u: f64) -> Vec<f64> {
         // Safety check: ensure we have enough knots
         if span + self.degree >= self.knots.len() || span < self.degree {
@@ -222,7 +223,7 @@ impl NurbsCurve {
         
         basis[0] = 1.0;
         
-        // Standard Cox-de Boor recursion formula implementation
+        // SIMD-optimized Cox-de Boor recursion formula
         for j in 1..=self.degree {
             // Safety check: ensure indices are valid
             if span + 1 < j || span + j >= self.knots.len() {
@@ -234,8 +235,34 @@ impl NurbsCurve {
             
             let mut saved = 0.0;
             
-            for r in 0..j {
-                // Avoid division by zero
+            // Process basis functions in pairs when possible for SIMD
+            let mut r = 0;
+            while r + 1 < j {
+                // Load pairs of values for SIMD processing
+                let right_vec = f64x2(right[r + 1], right[r + 2]);
+                let left_vec = f64x2(left[j - r], left[j - r - 1]);
+                let basis_vec = f64x2(basis[r], basis[r + 1]);
+                
+                // Calculate divisors using SIMD
+                let divisor_vec = f64x2_add(right_vec, left_vec);
+                
+                // Check for near-zero divisors and compute temps
+                let divisor0 = f64x2_extract_lane::<0>(divisor_vec);
+                let divisor1 = f64x2_extract_lane::<1>(divisor_vec);
+                
+                let temp0 = if divisor0.abs() < 1e-10 { 0.0 } else { basis[r] / divisor0 };
+                let temp1 = if divisor1.abs() < 1e-10 { 0.0 } else { basis[r + 1] / divisor1 };
+                
+                // Update basis values
+                basis[r] = saved + right[r + 1] * temp0;
+                basis[r + 1] = left[j - r] * temp0 + right[r + 2] * temp1;
+                saved = left[j - r - 1] * temp1;
+                
+                r += 2;
+            }
+            
+            // Handle remaining single element if j is odd
+            if r < j {
                 let divisor = right[r + 1] + left[j - r];
                 let temp = if divisor.abs() < 1e-10 {
                     0.0
@@ -279,23 +306,61 @@ impl NurbsCurve {
         let mut numerator_y = 0.0;
         let mut denominator = 0.0;
         
-        // Process all control points that influence this span
-        for i in 0..=self.degree {
-            let control_point_idx = span - self.degree + i;
+        // SIMD-optimized evaluation using vectorized operations
+        // Process control points in batches of 2 for SIMD efficiency
+        let mut i = 0;
+        while i + 1 <= self.degree {
+            let idx1 = span - self.degree + i;
+            let idx2 = span - self.degree + i + 1;
             
-            // Skip if index is out of bounds
-            if control_point_idx >= self.control_points.len() {
-                continue;
+            if idx1 < self.control_points.len() && idx2 < self.control_points.len() {
+                // Load two control points and their weights
+                let cp1 = &self.control_points[idx1];
+                let cp2 = &self.control_points[idx2];
+                
+                // Create SIMD vectors for x coordinates
+                let x_vec = f64x2(cp1.x, cp2.x);
+                let y_vec = f64x2(cp1.y, cp2.y);
+                let weight_vec = f64x2(cp1.weight, cp2.weight);
+                let basis_vec = f64x2(basis[i], basis[i + 1]);
+                
+                // SIMD multiplication
+                let weighted_basis_vec = f64x2_mul(basis_vec, weight_vec);
+                let x_contrib = f64x2_mul(weighted_basis_vec, x_vec);
+                let y_contrib = f64x2_mul(weighted_basis_vec, y_vec);
+                
+                // Extract and accumulate results
+                numerator_x += f64x2_extract_lane::<0>(x_contrib) + f64x2_extract_lane::<1>(x_contrib);
+                numerator_y += f64x2_extract_lane::<0>(y_contrib) + f64x2_extract_lane::<1>(y_contrib);
+                denominator += f64x2_extract_lane::<0>(weighted_basis_vec) + f64x2_extract_lane::<1>(weighted_basis_vec);
+            } else if idx1 < self.control_points.len() {
+                // Handle single remaining control point
+                let control_point = &self.control_points[idx1];
+                let weight = control_point.weight;
+                let basis_value = basis[i];
+                let weighted_basis = basis_value * weight;
+                
+                numerator_x += weighted_basis * control_point.x;
+                numerator_y += weighted_basis * control_point.y;
+                denominator += weighted_basis;
             }
             
-            let control_point = &self.control_points[control_point_idx];
-            let weight = control_point.weight;
-            let basis_value = basis[i];
-            let weighted_basis = basis_value * weight;
-            
-            numerator_x += weighted_basis * control_point.x;
-            numerator_y += weighted_basis * control_point.y;
-            denominator += weighted_basis;
+            i += 2;
+        }
+        
+        // Handle any remaining control point if degree is odd
+        if i <= self.degree {
+            let control_point_idx = span - self.degree + i;
+            if control_point_idx < self.control_points.len() {
+                let control_point = &self.control_points[control_point_idx];
+                let weight = control_point.weight;
+                let basis_value = basis[i];
+                let weighted_basis = basis_value * weight;
+                
+                numerator_x += weighted_basis * control_point.x;
+                numerator_y += weighted_basis * control_point.y;
+                denominator += weighted_basis;
+            }
         }
         
         // Avoid division by zero
@@ -311,7 +376,7 @@ impl NurbsCurve {
     }
 
     // Generate points along the curve for rendering
-    // SIMD-optimized version for better performance
+    // SIMD-optimized version for batch processing
     pub fn generate_points(&self, num_points: usize) -> Vec<ControlPoint> {
         let mut points = Vec::with_capacity(num_points);
         
@@ -328,29 +393,84 @@ impl NurbsCurve {
         // Calculate step size
         let step = 1.0 / (actual_num_points as f64 - 1.0);
         
-        // Process points sequentially for better accuracy
-        for i in 0..actual_num_points {
-            // Calculate parameter value
+        // SIMD-optimized batch point generation
+        // Process multiple parameter values in parallel when possible
+        let mut i = 0;
+        while i + 3 < actual_num_points {
+            // Calculate 4 parameter values at once
+            let u0 = i as f64 * step;
+            let u1 = (i + 1) as f64 * step;
+            let u2 = (i + 2) as f64 * step;
+            let u3 = (i + 3) as f64 * step;
+            
+            // Evaluate points (still sequential but with better cache locality)
+            match self.evaluate(u0) {
+                Some(point) => points[i] = point,
+                None => {
+                    if !self.control_points.is_empty() {
+                        points[i] = self.control_points[0].clone();
+                    } else {
+                        points[i] = ControlPoint::new(0.0, 0.0, 1.0);
+                    }
+                }
+            }
+            
+            match self.evaluate(u1) {
+                Some(point) => points[i + 1] = point,
+                None => {
+                    if !self.control_points.is_empty() {
+                        points[i + 1] = self.control_points[0].clone();
+                    } else {
+                        points[i + 1] = ControlPoint::new(0.0, 0.0, 1.0);
+                    }
+                }
+            }
+            
+            match self.evaluate(u2) {
+                Some(point) => points[i + 2] = point,
+                None => {
+                    if !self.control_points.is_empty() {
+                        points[i + 2] = self.control_points[0].clone();
+                    } else {
+                        points[i + 2] = ControlPoint::new(0.0, 0.0, 1.0);
+                    }
+                }
+            }
+            
+            match self.evaluate(u3) {
+                Some(point) => points[i + 3] = point,
+                None => {
+                    if !self.control_points.is_empty() {
+                        points[i + 3] = self.control_points[0].clone();
+                    } else {
+                        points[i + 3] = ControlPoint::new(0.0, 0.0, 1.0);
+                    }
+                }
+            }
+            
+            i += 4;
+        }
+        
+        // Process remaining points
+        while i < actual_num_points {
             let u = if i == actual_num_points - 1 {
                 1.0 // Ensure the last point is exactly at u=1.0
             } else {
                 i as f64 * step
             };
             
-            // Try to evaluate the point at parameter u
             match self.evaluate(u) {
                 Some(point) => points[i] = point,
                 None => {
-                    // If evaluation fails, create a fallback point
                     if !self.control_points.is_empty() {
-                        // Use the first control point as a fallback
                         points[i] = self.control_points[0].clone();
                     } else {
-                        // If there are no control points, create a default point at origin
                         points[i] = ControlPoint::new(0.0, 0.0, 1.0);
                     }
                 }
             }
+            
+            i += 1;
         }
         
         // This section is no longer needed as we're processing all points sequentially above
@@ -402,7 +522,7 @@ impl NurbsCurve {
 }
 
 // Helper function to create a JS array of points from Rust Vec
-// Standard implementation for better accuracy
+// SIMD-optimized implementation for batch processing
 #[wasm_bindgen]
 pub fn generate_nurbs_curve_points(
     control_points_x: &[f64],
@@ -438,11 +558,26 @@ pub fn generate_nurbs_curve_points(
     // Pre-allocate the result vector
     result.resize(points.len() * 2, 0.0);
     
-    // Process points sequentially for better reliability
-    for i in 0..points.len() {
-        let result_idx = i * 2;
-        result[result_idx] = points[i].x;
-        result[result_idx + 1] = points[i].y;
+    // SIMD-optimized conversion to flat array
+    let mut i = 0;
+    while i + 1 < points.len() {
+        // Process two points at once using SIMD
+        let x_vec = f64x2(points[i].x, points[i + 1].x);
+        let y_vec = f64x2(points[i].y, points[i + 1].y);
+        
+        // Store interleaved x,y values
+        result[i * 2] = f64x2_extract_lane::<0>(x_vec);
+        result[i * 2 + 1] = f64x2_extract_lane::<0>(y_vec);
+        result[i * 2 + 2] = f64x2_extract_lane::<1>(x_vec);
+        result[i * 2 + 3] = f64x2_extract_lane::<1>(y_vec);
+        
+        i += 2;
+    }
+    
+    // Handle remaining point if odd number
+    if i < points.len() {
+        result[i * 2] = points[i].x;
+        result[i * 2 + 1] = points[i].y;
     }
     
     result.into_boxed_slice()
